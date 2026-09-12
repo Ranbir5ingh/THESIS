@@ -1,3 +1,15 @@
+# Changelog
+
+## v7 — Yahoo Finance fundamentals reliability fix
+
+- Fixed Yahoo Finance `quoteSummary` authentication using the required session cookie + crumb handshake.
+- Fixed a parsing bug where Yahoo values wrapped as `{ raw, fmt }` were flattened to the `raw` leaf and therefore never matched metric names.
+- P/E, revenue growth, profit growth, debt/equity, beta and market cap can now populate from Yahoo Finance when the provider exposes them.
+- Added automatic crumb/session refresh on Yahoo authorization or invalid-crumb responses.
+- Versioned Yahoo cache keys so stale v6 empty/error fundamentals responses cannot mask the corrected provider path.
+- Generic fundamentals warning is now shown only when at least one requested fundamental is actually missing.
+- Preserved the no-fabrication rule: unavailable fields stay unavailable.
+
 ## 2026-09-13 — v6 Yahoo Finance market-data architecture
 - Replaced previous credit-based market provider as the required market-data provider with Yahoo Finance.
 - Removed the previous credit-based market provider API-key dependency from the default setup.

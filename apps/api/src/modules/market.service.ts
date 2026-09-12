@@ -52,6 +52,8 @@ type ProviderRef = { symbol: string; exchange?: string };
 export class MarketService {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly inflight = new Map<string, Promise<unknown>>();
+  private yahooSession: { cookie: string; crumb: string; expires: number } | null = null;
+  private yahooSessionInflight: Promise<{ cookie: string; crumb: string }> | null = null;
 
   constructor(@Inject(DB) private readonly pool: Pool | null) {}
 
@@ -75,8 +77,56 @@ export class MarketService {
    * Responses are cached in memory and, when Supabase is configured, in
    * Postgres so a restart does not immediately repeat the same upstream call.
    */
-  private async yahooRequest<T = any>(path: string, params: Record<string, string>, ttlMs: number): Promise<T> {
-    const key = `yahoo:${path}:${JSON.stringify(params)}`;
+  private async yahooSessionCredentials(force = false): Promise<{ cookie: string; crumb: string }> {
+    if (!force && this.yahooSession && this.yahooSession.expires > Date.now()) {
+      return { cookie: this.yahooSession.cookie, crumb: this.yahooSession.crumb };
+    }
+    if (this.yahooSessionInflight) return this.yahooSessionInflight;
+
+    const task = (async () => {
+      const cookieResponse = await fetch("https://fc.yahoo.com/", {
+        signal: AbortSignal.timeout(10_000),
+        headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36" },
+      });
+
+      const setCookies = typeof (cookieResponse.headers as any).getSetCookie === "function"
+        ? (cookieResponse.headers as any).getSetCookie() as string[]
+        : [cookieResponse.headers.get("set-cookie") || ""];
+      const cookie = setCookies
+        .flatMap((value: string) => value.split(/,(?=[A-Za-z0-9_]+=[^;]+)/))
+        .map((value: string) => value.split(";")[0].trim())
+        .filter(Boolean)
+        .join("; ");
+
+      if (!cookie) throw new ServiceUnavailableException("Yahoo Finance did not provide a session cookie for fundamentals.");
+
+      const crumbResponse = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
+        signal: AbortSignal.timeout(10_000),
+        headers: {
+          accept: "text/plain",
+          cookie,
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36",
+        },
+      });
+      const crumb = (await crumbResponse.text()).trim();
+      if (!crumbResponse.ok || !crumb || /invalid|unauthorized|too many/i.test(crumb)) {
+        throw new ServiceUnavailableException("Yahoo Finance could not establish a fundamentals session.");
+      }
+
+      this.yahooSession = { cookie, crumb, expires: Date.now() + 45 * 60_000 };
+      return { cookie, crumb };
+    })();
+
+    this.yahooSessionInflight = task;
+    try {
+      return await task;
+    } finally {
+      this.yahooSessionInflight = null;
+    }
+  }
+
+  private async yahooRequest<T = any>(path: string, params: Record<string, string>, ttlMs: number, authenticated = false): Promise<T> {
+    const key = `yahoo:v7:${authenticated ? "auth" : "public"}:${path}:${JSON.stringify(params)}`;
     const memory = this.cacheGet<T>(key);
     if (memory !== null) return memory;
 
@@ -107,71 +157,82 @@ export class MarketService {
       const url = new URL(`https://query1.finance.yahoo.com${path}`);
       for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
 
-      try {
-        const response = await fetch(url, {
-          signal: AbortSignal.timeout(12_000),
-          headers: {
-            accept: "application/json",
-            "user-agent": "THESIS-Educational-Investment-Coach/1.0",
-          },
-        });
-        const json = await response.json().catch(() => ({}));
+      let credentials: { cookie: string; crumb: string } | null = authenticated ? await this.yahooSessionCredentials() : null;
 
-        if (!response.ok || json?.finance?.error || json?.chart?.error) {
-          const message = String(
-            json?.finance?.error?.description ||
-            json?.chart?.error?.description ||
-            `Yahoo Finance HTTP ${response.status}`,
-          );
+      for (let attempt = 0; attempt < (authenticated ? 2 : 1); attempt += 1) {
+        if (authenticated && credentials) url.searchParams.set("crumb", credentials.crumb);
 
-          // If the provider throttles us, use the last verified response if one exists.
-          if (response.status === 429 || /too many|rate|crumb|unauthorized/i.test(message)) {
-            if (this.pool) {
-              try {
-                const stale = await query<{ payload: T }>(
-                  this.pool,
-                  `SELECT payload FROM market_data_cache WHERE cache_key=$1 LIMIT 1`,
-                  [key],
-                );
-                if (stale.rows[0]?.payload) {
-                  this.cacheSet(key, stale.rows[0].payload, 60_000);
-                  return stale.rows[0].payload;
+        try {
+          const response = await fetch(url, {
+            signal: AbortSignal.timeout(12_000),
+            headers: {
+              accept: "application/json",
+              "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36",
+              ...(credentials ? { cookie: credentials.cookie } : {}),
+            },
+          });
+          const json = await response.json().catch(() => ({}));
+          const providerError = json?.finance?.error || json?.chart?.error || json?.quoteSummary?.error;
+          const message = String(providerError?.description || `Yahoo Finance HTTP ${response.status}`);
+
+          if (authenticated && attempt === 0 && (/invalid crumb|invalid cookie|unauthorized|forbidden/i.test(message) || response.status === 401 || response.status === 403)) {
+            this.yahooSession = null;
+            credentials = await this.yahooSessionCredentials(true);
+            continue;
+          }
+
+          if (!response.ok || providerError) {
+            // If the provider throttles us, use the last verified response if one exists.
+            if (response.status === 429 || /too many|rate limit/i.test(message)) {
+              if (this.pool) {
+                try {
+                  const stale = await query<{ payload: T }>(
+                    this.pool,
+                    `SELECT payload FROM market_data_cache WHERE cache_key=$1 LIMIT 1`,
+                    [key],
+                  );
+                  if (stale.rows[0]?.payload) {
+                    this.cacheSet(key, stale.rows[0].payload, 60_000);
+                    return stale.rows[0].payload;
+                  }
+                } catch {
+                  // Continue to a clear provider error.
                 }
-              } catch {
-                // Continue to a clear provider error.
               }
+              throw new ServiceUnavailableException(
+                "Yahoo Finance is temporarily rate-limiting this request and THESIS has no cached copy yet. Please retry shortly.",
+              );
             }
-            throw new ServiceUnavailableException(
-              "Yahoo Finance is temporarily rate-limiting this request and THESIS has no cached copy yet. Please retry shortly.",
-            );
+
+            throw new ServiceUnavailableException(`Yahoo Finance could not return this data: ${message}`);
           }
 
-          throw new ServiceUnavailableException(`Yahoo Finance could not return this data: ${message}`);
-        }
+          this.cacheSet(key, json, ttlMs);
 
-        this.cacheSet(key, json, ttlMs);
-
-        if (this.pool) {
-          try {
-            await query(
-              this.pool,
-              `INSERT INTO market_data_cache(cache_key,payload,expires_at)
-               VALUES($1,$2::jsonb,now()+($3::bigint * interval '1 millisecond'))
-               ON CONFLICT(cache_key) DO UPDATE SET payload=EXCLUDED.payload,expires_at=EXCLUDED.expires_at`,
-              [key, JSON.stringify(json), ttlMs],
-            );
-          } catch {
-            // Cache writes must never break a successful market-data response.
+          if (this.pool) {
+            try {
+              await query(
+                this.pool,
+                `INSERT INTO market_data_cache(cache_key,payload,expires_at)
+                 VALUES($1,$2::jsonb,now()+($3::bigint * interval '1 millisecond'))
+                 ON CONFLICT(cache_key) DO UPDATE SET payload=EXCLUDED.payload,expires_at=EXCLUDED.expires_at`,
+                [key, JSON.stringify(json), ttlMs],
+              );
+            } catch {
+              // Cache writes must never break a successful market-data response.
+            }
           }
-        }
 
-        return json as T;
-      } catch (error) {
-        if (error instanceof ServiceUnavailableException) throw error;
-        throw new ServiceUnavailableException(
-          "Yahoo Finance could not be reached. The provider is temporarily unavailable; please retry shortly.",
-        );
+          return json as T;
+        } catch (error) {
+          if (error instanceof ServiceUnavailableException) throw error;
+          throw new ServiceUnavailableException(
+            "Yahoo Finance could not be reached. The provider is temporarily unavailable; please retry shortly.",
+          );
+        }
       }
+
+      throw new ServiceUnavailableException("Yahoo Finance did not return a usable response.");
     })();
 
     this.inflight.set(key, request);
@@ -190,6 +251,10 @@ export class MarketService {
 
   private percent(value: unknown) {
     return this.num(value);
+  }
+
+  private ratioPercent(value: number | null) {
+    return value === null ? null : value * 100;
   }
 
   private currency(symbol: string, exchange: string, provider?: string) {
@@ -268,8 +333,13 @@ export class MarketService {
         `/v10/finance/quoteSummary/${encodeURIComponent(yahoo)}`,
         {
           modules: "price,summaryDetail,defaultKeyStatistics,financialData,assetProfile",
+          formatted: "false",
+          lang: "en-US",
+          region: "US",
+          corsDomain: "finance.yahoo.com",
         },
         24 * 60 * 60_000,
+        true,
       );
     } catch {
       return null;
@@ -279,6 +349,46 @@ export class MarketService {
   private async priceSeries(symbol: string): Promise<PricePoint[]> {
     const result = await this.yahooChart(symbol);
     return result.series;
+  }
+
+  private benchmarkSymbol(symbol: string) {
+    const exchange = this.providerRef(symbol).exchange;
+    if (exchange === "NSE") return "^NSEI";
+    if (exchange === "BSE") return "^BSESN";
+    return "^GSPC";
+  }
+
+  private historicalBeta(series: PricePoint[], benchmark: PricePoint[]) {
+    const assetByDate = new Map(series.map(x => [x.date, x.price]));
+    const benchmarkReturns: number[] = [];
+    const assetReturns: number[] = [];
+    let previousBenchmark: number | null = null;
+    let previousAsset: number | null = null;
+
+    for (const point of benchmark) {
+      const assetPrice = assetByDate.get(point.date);
+      if (!Number.isFinite(point.price) || point.price <= 0 || !Number.isFinite(assetPrice) || (assetPrice as number) <= 0) continue;
+      if (previousBenchmark !== null && previousAsset !== null) {
+        benchmarkReturns.push(point.price / previousBenchmark - 1);
+        assetReturns.push((assetPrice as number) / previousAsset - 1);
+      }
+      previousBenchmark = point.price;
+      previousAsset = assetPrice as number;
+    }
+
+    if (benchmarkReturns.length < 30) return null;
+    const meanB = benchmarkReturns.reduce((sum, value) => sum + value, 0) / benchmarkReturns.length;
+    const meanA = assetReturns.reduce((sum, value) => sum + value, 0) / assetReturns.length;
+    let covariance = 0;
+    let variance = 0;
+    for (let i = 0; i < benchmarkReturns.length; i += 1) {
+      const db = benchmarkReturns[i] - meanB;
+      covariance += (assetReturns[i] - meanA) * db;
+      variance += db * db;
+    }
+    if (variance <= 0) return null;
+    const beta = covariance / variance;
+    return Number.isFinite(beta) ? Math.max(-5, Math.min(5, beta)) : null;
   }
 
   private historyMetrics(series: PricePoint[]) {
@@ -379,10 +489,16 @@ export class MarketService {
   }
 
   private pickStat(flat: Record<string, number>, keys: string[]) {
+    // Yahoo wraps most fundamentals as { raw, fmt }. The previous implementation
+    // only inspected the final path segment (usually `raw`), so even a successful
+    // quoteSummary response produced null for every fundamental. Match the named
+    // metric at any path segment instead.
     for (const key of keys) {
       const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const exact = Object.entries(flat).find(([path]) => path.split(".").pop() === normalized);
-      if (exact) return exact[1];
+      const match = Object.entries(flat).find(([path]) =>
+        path.split(".").some(segment => segment === normalized),
+      );
+      if (match) return match[1];
     }
     return null;
   }
@@ -511,18 +627,26 @@ export class MarketService {
     const marketCap = this.pickStat(flat, [
       "marketcap", "marketcapitalization",
     ]);
-    const revenueGrowth = this.pickStat(flat, [
+    const revenueGrowth = this.ratioPercent(this.pickStat(flat, [
       "revenuegrowth", "revenue_growth", "revenuegrowthyoy",
-    ]);
-    const profitGrowth = this.pickStat(flat, [
+    ]));
+    const profitGrowth = this.ratioPercent(this.pickStat(flat, [
       "earningsgrowth", "profitgrowth", "netincomegrowth", "epsgrowth",
-    ]);
+    ]));
     const debtToEquity = this.pickStat(flat, [
       "debtequity", "debttoequity", "debt_equity",
     ]);
-    const beta = this.pickStat(flat, [
+    let beta = this.pickStat(flat, [
       "beta", "beta3year", "beta5yearmonthly",
     ]);
+    if (beta === null) {
+      try {
+        const benchmark = await this.priceSeries(this.benchmarkSymbol(requested));
+        beta = this.historicalBeta(history, benchmark);
+      } catch {
+        // Beta remains unavailable when Yahoo does not provide enough benchmark data.
+      }
+    }
 
     const providerSymbol = String(meta.symbol || this.yahooSymbol(requested));
     const providerExchange = String(meta.fullExchangeName || meta.exchangeName || meta.exchange || "");
@@ -586,7 +710,9 @@ export class MarketService {
     if (asset.beta === null) asset.dataWarnings.push("Beta is unavailable from Yahoo Finance for this instrument.");
     if (asset.hypeScore === null) asset.dataWarnings.push("A complete hype score could not be calculated because some attention signals are unavailable.");
     if (asset.historicalAnnualizedReturn === null) asset.dataWarnings.push("A historical annualized return could not be calculated from the available price history.");
-    asset.dataWarnings.push("Some fundamentals may be unavailable because Yahoo Finance does not expose them consistently for every instrument. THESIS leaves missing fields blank rather than inventing values.");
+    if ([asset.pe, asset.revenueGrowth, asset.profitGrowth, asset.debtToEquity, asset.beta].some(x => x === null)) {
+      asset.dataWarnings.push("Some fundamentals are unavailable because Yahoo Finance does not expose them consistently for every instrument. THESIS leaves missing fields blank rather than inventing values.");
+    }
 
     return asset;
   }
