@@ -1,0 +1,33 @@
+{
+  "name": "@thesis/web",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "latest",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "latest",
+    "motion": "latest",
+    "next": "16.3.3",
+    "next-themes": "latest",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "recharts": "latest",
+    "tailwind-merge": "^3.3.1",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "latest",
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "tailwindcss": "latest",
+    "typescript": "^5.9.2"
+  }
+}

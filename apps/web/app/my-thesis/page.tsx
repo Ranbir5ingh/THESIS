@@ -1,0 +1,7 @@
+"use client";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { ArrowRight, BrainCircuit } from "lucide-react";
+import { api } from "@/lib/api";
+import { Card } from "@/components/ui/card";
+export default function MyThesis(){const [items,setItems]=useState<any[]>([]);useEffect(()=>{api<any[]>('/thesis').then(setItems).catch(()=>{})},[]);return <div><p className="text-xs uppercase tracking-[.18em] text-[var(--muted)]">Investment journal</p><h1 className="mt-2 text-4xl font-black">My Thesis</h1><p className="mt-3 text-[var(--muted)]">Your reasoning matters more than your prediction. Revisit what you believed and why.</p><div className="mt-8 grid gap-4 md:grid-cols-2">{items.length?items.map(x=><Card key={x.id} className="p-5"><div className="flex justify-between"><div><p className="text-xs text-[var(--muted)]">{x.symbol}</p><h2 className="mt-1 font-bold">Thesis strength {x.thesis_score}/100</h2></div><span className="text-xs text-[var(--accent)]">{x.decision}</span></div><p className="mt-5 text-sm leading-6 text-[var(--muted)]">“{x.thesis_text}”</p></Card>):<Card className="p-7 md:col-span-2"><BrainCircuit className="text-[var(--accent)]"/><h2 className="mt-4 text-xl font-bold">No saved theses yet.</h2><p className="mt-2 text-sm text-[var(--muted)]">Challenge an investment, then save the reasoning so you can re-evaluate it later.</p><Link href="/asset/NVIDIA" className="mt-5 inline-flex items-center gap-2 text-sm text-[var(--accent)]">Try NVIDIA <ArrowRight size={15}/></Link></Card>}</div></div>}
