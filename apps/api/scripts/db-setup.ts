@@ -1,4 +1,4 @@
-import "dotenv/config";
+import dotenv from "dotenv"; dotenv.config({path:"../../.env"});
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
 import { join } from "node:path";

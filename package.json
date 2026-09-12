@@ -1,19 +1,5 @@
 {
-  "name": "thesis-investment-coach",
-  "private": true,
-  "version": "1.0.0",
-  "packageManager": "npm@11",
-  "workspaces": ["apps/web", "apps/api", "packages/shared"],
-  "scripts": {
-    "dev": "concurrently \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
-    "dev:web": "npm run dev -w apps/web",
-    "dev:api": "npm run dev -w apps/api",
-    "build": "npm run build -w packages/shared && npm run build -w apps/api && npm run build -w apps/web",
-    "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w apps/api && npm run typecheck -w apps/web",
-    "db:setup": "npm run db:setup -w apps/api",
-    "db:seed": "npm run db:seed -w apps/api"
-  },
-  "devDependencies": {
-    "concurrently": "^9.2.1"
-  }
+  "name":"thesis-investment-coach","private":true,"version":"2.0.0","packageManager":"npm@11","workspaces":["apps/web","apps/api","packages/shared"],
+  "scripts":{"dev":"concurrently \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"","dev:web":"npm run dev -w apps/web","dev:api":"npm run dev -w apps/api","build":"npm run build -w packages/shared && npm run build -w apps/api && npm run build -w apps/web","typecheck":"npm run typecheck -w packages/shared && npm run typecheck -w apps/api && npm run typecheck -w apps/web","db:setup":"npm run db:setup -w apps/api","db:seed":"npm run db:seed -w apps/api"},
+  "devDependencies":{"concurrently":"^9.2.1"}
 }

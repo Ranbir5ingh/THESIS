@@ -68,3 +68,17 @@ create index if not exists theses_asset_created_idx on theses(asset_id, created_
 insert into investor_profiles(email, goal, risk_tolerance, time_horizon, knowledge_level, growth_preference, income_preference)
 values ('demo@thesis.local', 'long-term wealth', 'moderate', '5–10 years', 'basics', 'balanced', 'growth')
 on conflict (email) do nothing;
+
+create table if not exists simulations (
+  id uuid primary key default gen_random_uuid(),
+  email text not null,
+  asset_id uuid not null references assets(id) on delete cascade,
+  investment_amount double precision not null,
+  horizon_years integer not null,
+  bull_value double precision not null,
+  base_value double precision not null,
+  bear_value double precision not null,
+  behavior_response text,
+  created_at timestamptz not null default now()
+);
+create index if not exists simulations_email_created_idx on simulations(email, created_at desc);

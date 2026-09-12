@@ -1,74 +1,44 @@
-# THESIS — AI Investment Decision Coach
+# THESIS
 
 **Don't invest because everyone else is. Understand why.**
 
-A hackathon-ready full-stack product for first-time investors. THESIS turns market data into understandable insights, detects hype and behavioral biases, challenges a user's investment thesis, and runs transparent educational scenarios before a decision.
+A polished full-stack investment decision coach for a hackathon: discover assets, understand fundamentals, build an investment thesis, challenge it with Gemini, stress-test the decision and save the reasoning.
 
 ## Stack
 
-- Next.js 16 + React 19 + TypeScript
+- Next.js 16 App Router + React 19 + TypeScript
 - Tailwind CSS 4
-- shadcn/ui-style local components
+- Motion for React micro-interactions
+- Recharts
 - NestJS 11
-- Supabase PostgreSQL
-- `pg` connection pooling (no local database, no Docker)
+- PostgreSQL on Supabase (no Docker, no local database)
+- Native `pg` pool
 - Gemini API via `@google/genai`
-- Alpha Vantage market data with deterministic demo fallback
-- Recharts + Motion
+- Alpha Vantage for global symbol search, quotes, daily history and news/sentiment
 
-The project intentionally does **not** use Docker or a local PostgreSQL server.
-
-## Requirements
-
-- Node.js 22+ for the app stack
-- npm 11+
-- A Supabase project
-- Gemini API key for AI challenge/translation
-- Alpha Vantage key for live market data (optional; demo data works without it)
-
-## Setup
+## Run
 
 1. Copy `.env.example` to `.env`.
-2. Put your Supabase **Postgres connection string** in `DATABASE_URL`. Do not paste the Supabase dashboard HTTPS URL there.
-3. Run the SQL in `supabase/schema.sql` in Supabase SQL Editor.
-4. Install packages:
+2. Add your Supabase Postgres connection string.
+3. Add `GEMINI_API_KEY` for live thesis analysis.
+4. Add `ALPHA_VANTAGE_API_KEY` for live global symbol search, quotes, fundamentals, history and news. The app caches provider responses to reduce unnecessary API usage. Without a key, only the clearly-labelled demo assets are available.
+5. In Supabase SQL Editor, run `supabase/schema.sql`.
+6. Run:
 
 ```bash
 npm install
-```
-
-5. Start both apps:
-
-```bash
 npm run dev
 ```
 
-Web: `http://localhost:3000`
-API: `http://localhost:4000/api`
+Web: http://localhost:3000
+API: http://localhost:4000/api
 
-## Supabase connection
+## Product loop
 
-For a persistent NestJS server, Supabase's pooler or a direct TCP connection can be used. The app uses an application-side `pg` pool and prefers the `DATABASE_URL` you provide. Keep `DIRECT_URL` separate for administrative/SQL tooling if desired.
+Understand → Challenge → Simulate → Decide
 
-## Demo mode
+The scoring engines are deterministic. Gemini explains/challenges supplied data and is explicitly instructed not to invent financial numbers or produce buy/sell instructions. Live assets never receive fabricated historical charts: if the market-data provider is unavailable, THESIS says so.
 
-The UI is designed to remain useful even when external APIs are not configured. The API falls back to deterministic demo data for RELIANCE, TCS, NVIDIA, APPLE and a small set of additional assets. Gemini explanations gracefully fall back to deterministic educational copy if `GEMINI_API_KEY` is missing.
+## Important
 
-## Architecture
-
-```text
-Next.js 16
-   │
-   │ REST
-   ▼
-NestJS 11
-   ├── Market Service ── Alpha Vantage / demo data
-   ├── Analysis Engine ─ deterministic quality/risk/hype/fit scores
-   ├── Thesis Service ── Gemini reasoning layer
-   ├── Simulation Service ─ transparent scenarios
-   └── Data Service ───── Supabase PostgreSQL via pg
-```
-
-## Important safety/product boundary
-
-THESIS is an educational decision coach, not a broker or a promise of returns. Simulation outputs are scenarios, not predictions. The LLM is explicitly instructed to use supplied data and avoid inventing quantitative facts.
+This is an educational product, not financial advice. Rotate any API keys that have been exposed publicly.
