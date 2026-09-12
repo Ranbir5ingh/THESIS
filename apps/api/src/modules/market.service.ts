@@ -61,6 +61,52 @@ export class MarketService {
     } catch { return null; }
   }
 
+  private inferCurrency(symbol:string, exchange:string, providerCurrency?:string) {
+    const s = symbol.toUpperCase();
+    const e = exchange.toUpperCase();
+    if (s.endsWith(".BSE") || s.endsWith(".NSE") || e.includes("BSE") || e.includes("NSE") || e === "INDIA") return "INR";
+    if (providerCurrency && /^[A-Z]{3}$/.test(providerCurrency)) return providerCurrency;
+    return "USD";
+  }
+
+  private newsCandidates(symbol:string) {
+    const s = decodeURIComponent(symbol).toUpperCase();
+    const base = s.split(".")[0];
+    return Array.from(new Set([s, base].filter(Boolean)));
+  }
+
+  private async googleNews(query:string) {
+    const key = `google-news:${query.toLowerCase()}`;
+    const cached = this.cacheGet<any[]>(key);
+    if (cached) return cached;
+    try {
+      const u = new URL("https://news.google.com/rss/search");
+      u.searchParams.set("q", query);
+      u.searchParams.set("hl", "en-IN");
+      u.searchParams.set("gl", "IN");
+      u.searchParams.set("ceid", "IN:en");
+      const r = await fetch(u, {signal: AbortSignal.timeout(8000), headers:{accept:"application/rss+xml, application/xml, text/xml"}});
+      if (!r.ok) return [];
+      const xml = await r.text();
+      const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)].map(m => m[1]);
+      const clean = (value:string) => value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,"$1").replace(/<[^>]+>/g,"").replace(/&amp;/g,"&").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,"<").replace(/&gt;/g,">").trim();
+      const extract = (item:string, tag:string) => {
+        const m = item.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "i"));
+        return m ? clean(m[1]) : "";
+      };
+      const result = items.slice(0,8).map(item => ({
+        title: extract(item,"title"),
+        url: extract(item,"link"),
+        source: extract(item,"source") || "Google News",
+        time: extract(item,"pubDate"),
+        sentiment: 0,
+        summary: ""
+      })).filter(x => x.title && x.url);
+      this.cacheSet(key, result, 10*60_000);
+      return result;
+    } catch { return []; }
+  }
+
   async search(q = "") {
     const term = q.trim();
     if (!term) return CURATED;
@@ -68,7 +114,7 @@ export class MarketService {
     const matches = Array.isArray(remote?.bestMatches) ? remote.bestMatches.map((x:any) => ({
       symbol:x["1. symbol"], name:x["2. name"], exchange:x["4. region"] || "Global",
       sector:x["3. type"] || "Equity", price:null, changePercent:null, personalFit:null,
-      riskScore:null, hypeScore:null, currency:x["8. currency"], matchScore:Number(x["9. matchScore"]||0)
+      riskScore:null, hypeScore:null, currency:this.inferCurrency(String(x["1. symbol"]||""), String(x["4. region"]||"Global"), String(x["8. currency"]||"")), matchScore:Number(x["9. matchScore"]||0)
     })).filter((x:any)=>x.symbol&&x.name) : [];
     if (matches.length) return matches.sort((a:any,b:any)=>b.matchScore-a.matchScore).slice(0,12);
     const n = term.toUpperCase();
@@ -114,7 +160,7 @@ export class MarketService {
           profitGrowth:Number(String(o.QuarterlyEarningsGrowthYOY||0).replace("%",""))||0,
           debtToEquity:Number(o.DebtToEquity)||0, volatility:45, maxDrawdown:30,
           qualityScore:72, riskScore:52, hypeScore:45, personalFit:74,
-          currency:String(o.Currency||"USD"), dataSource:"live"
+          currency:this.inferCurrency(candidate, String(o.Exchange||"Global"), String(o.Currency||"")), dataSource:"live"
         };
         return this.deriveScores(a);
       }
@@ -157,8 +203,30 @@ export class MarketService {
   }
 
   async news(symbol:string) {
-    const remote=await this.av({function:"NEWS_SENTIMENT",tickers:decodeURIComponent(symbol).toUpperCase(),limit:"8",sort:"LATEST"},10*60_000);
-    return (remote?.feed??[]).slice(0,8).map((x:any)=>({title:x.title,source:x.source,url:x.url,time:x.time_published,sentiment:Number(x.overall_sentiment_score)||0,summary:x.summary}));
+    const candidates = this.newsCandidates(symbol);
+    for (const ticker of candidates) {
+      const remote = await this.av({function:"NEWS_SENTIMENT",tickers:ticker,limit:"8",sort:"LATEST"},10*60_000);
+      const feed = Array.isArray(remote?.feed) ? remote.feed : [];
+      if (feed.length) {
+        return feed.slice(0,8).map((x:any)=>({
+          title:x.title,
+          source:x.source || "Alpha Vantage",
+          url:x.url,
+          time:x.time_published,
+          sentiment:Number(x.overall_sentiment_score)||0,
+          summary:x.summary || ""
+        }));
+      }
+    }
+
+    // Alpha Vantage can have ticker coverage gaps, especially for smaller exchanges.
+    // Use Google News RSS as a no-key fallback rather than manufacturing stories.
+    const requested = decodeURIComponent(symbol).toUpperCase();
+    const catalog = CATALOG.find((x:any)=>x.symbol===requested || `${x.symbol}.BSE`===requested || `${x.symbol}.NSE`===requested);
+    const curated = CURATED.find(a=>a.symbol===requested || `${a.symbol}.BSE`===requested);
+    const name = curated?.name || catalog?.name || requested.replace(/\.(BSE|NSE)$/i,"");
+    const query = `${name} stock shares`;
+    return this.googleNews(query);
   }
 
   async persistSnapshot(symbol:string){

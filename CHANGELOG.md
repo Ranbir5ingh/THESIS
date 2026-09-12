@@ -25,3 +25,11 @@
 - Asset pages clearly label live vs demo data.
 - Simulation is explained as a decision stress test rather than a prediction tool.
 - Missing data produces explicit, useful UI instead of silent failures.
+
+
+## Currency + news hardening
+- Currency is now inferred from exchange/ticker metadata instead of treating every non-USD asset as INR. Indian `.BSE`/`.NSE` symbols are explicitly normalized to INR.
+- Asset, Explore, Watchlist and Simulator monetary displays use the asset currency consistently.
+- Alpha Vantage news now tries both exchange-qualified and base tickers (for example `CIANAGRO.BSE` and `CIANAGRO`).
+- Added a live Google News RSS fallback for companies where Alpha Vantage returns no ticker-specific articles, without inventing news.
+- News cards now show source, date and available Alpha Vantage sentiment.

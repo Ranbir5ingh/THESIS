@@ -14,7 +14,7 @@ A polished full-stack investment decision coach for a hackathon: discover assets
 - PostgreSQL on Supabase (no Docker, no local database)
 - Native `pg` pool
 - Gemini API via `@google/genai`
-- Alpha Vantage for global symbol search, quotes, daily history and news/sentiment
+- Alpha Vantage for global symbol search, quotes, daily history and news/sentiment, with a Google News RSS fallback when ticker-level news coverage is unavailable
 
 ## Run
 
