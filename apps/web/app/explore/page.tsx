@@ -23,7 +23,7 @@ export default function Explore(){
       if(id!==requestId.current)return;
       setLoading(true); setError("");
       try { const r=await api<any[]>(`/assets/search?q=${encodeURIComponent(term)}`); if(id===requestId.current)setData(r); }
-      catch { if(id===requestId.current){setData([]);setError("Live search is temporarily unavailable. You can still open a saved/demo asset or check your market-data key.");} }
+      catch { if(id===requestId.current){setData([]);setError("Live search is temporarily unavailable. Check the live market-data configuration and retry shortly.");} }
       finally { if(id===requestId.current)setLoading(false); }
     }, term?320:0);
     return()=>clearTimeout(t);

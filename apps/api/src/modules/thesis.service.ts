@@ -1,2 +1,43 @@
-import {Inject,Injectable} from "@nestjs/common";import{GoogleGenAI}from"@google/genai";import type{Pool}from"pg";import{DB}from"../common/db.module";import{query}from"../common/db";import{MarketService}from"./market.service";
-@Injectable()export class ThesisService{constructor(@Inject(DB)private readonly pool:Pool|null,private readonly market:MarketService){}async challenge(i:any){const a=await this.market.analysis(i.symbol);const prompt=`You are THESIS, an educational investment decision coach. Do not give buy/sell instructions. Never invent numbers. Use only supplied data. Analyze the thesis for assumptions, supporting evidence, contradictory evidence, behavioral bias, devil's advocate and decision. Return ONLY JSON: thesisStrength number, assumptions string[], supportingEvidence string[], contradictingEvidence string[], biggestAssumption string, biases array {name,score,reason}, devilAdvocate string, decision CONSIDER|WAIT|RETHINK, summary string. DATA:${JSON.stringify(a)} PROFILE:${JSON.stringify(i.profile??{})} THESIS:${i.thesis}`;const t=await this.gemini(prompt);if(t)try{return JSON.parse(t)}catch{}return this.fallback(i.thesis,a)}private async gemini(p:string){if(!process.env.GEMINI_API_KEY)return null;try{const ai=new GoogleGenAI({apiKey:process.env.GEMINI_API_KEY});const r=await ai.models.generateContent({model:process.env.GEMINI_MODEL??"gemini-3.8-flash",contents:p,config:{responseMimeType:"application/json",temperature:.35,maxOutputTokens:1200}});return r.text?.trim()??null}catch(e){console.error(e);return null}}private fallback(t:string,a:any){const h=a.hype.score,r=a.risk.score,f=Math.max(45,Math.min(93,78-Math.round(r*.18)-Math.round(Math.max(0,h-55)*.16)+(t.length>70?7:0))),fomo=/everyone|trending|hype|viral|moon|going to/i.test(t);return{thesisStrength:f,assumptions:["Expected growth continues through the chosen horizon.","The current valuation does not fully price that growth."],supportingEvidence:[`Business quality is ${a.quality.score}/100.`,`Revenue growth is ${a.fundamentals.revenueGrowth}%.`],contradictingEvidence:[r>50?`Risk is ${r}/100, so drawdowns can be meaningful.`:"Valuation still matters even when business quality is high.",h>60?`Hype is ${h}/100, so attention may be running ahead of fundamentals.`:"Future execution remains uncertain."],biggestAssumption:"Future earnings growth will be strong enough to justify the price paid today.",biases:[{name:fomo?"FOMO / Herding":"Confirmation bias",score:fomo?84:34,reason:fomo?"Popularity is being used as part of the investment case.":"A compelling story can make confirming evidence feel more important than contradictory evidence."}],devilAdvocate:"If growth slows while valuation stays elevated, the market can re-rate the asset even if the company remains healthy.",decision:r>70||h>84?"WAIT":f>=70?"CONSIDER":"RETHINK",summary:"The idea has a coherent story, but the decision hinges on whether expected growth is already reflected in today's price."}}async save(i:any){if(this.pool){const a=await this.market.getAsset(i.symbol);const ar=await query<{id:string}>(this.pool,`INSERT INTO assets(symbol,exchange,name,sector,asset_type)VALUES($1,$2,$3,$4,'stock')ON CONFLICT(symbol)DO UPDATE SET name=EXCLUDED.name RETURNING id`,[a.symbol,a.exchange,a.name,a.sector]);await query(this.pool,`INSERT INTO theses(email,asset_id,thesis_text,thesis_score,bias_score,decision,analysis_json)VALUES($1,$2,$3,$4,$5,$6,$7)`,[i.email??"demo@thesis.local",ar.rows[0].id,i.thesis,i.analysis?.thesisStrength??0,i.analysis?.biases?.[0]?.score??0,i.analysis?.decision??"WAIT",JSON.stringify(i.analysis??{})])}return{saved:true}}async list(){if(!this.pool)return[];return(await query(this.pool,`SELECT t.id,t.thesis_text,t.thesis_score,t.bias_score,t.decision,t.created_at,a.symbol,a.name FROM theses t JOIN assets a ON a.id=t.asset_id WHERE t.email=$1 ORDER BY t.created_at DESC`,["demo@thesis.local"])).rows}}
+import { Inject, Injectable, ServiceUnavailableException } from "@nestjs/common";
+import { GoogleGenAI } from "@google/genai";
+import type { Pool } from "pg";
+import { DB } from "../common/db.module";
+import { query } from "../common/db";
+import { MarketService } from "./market.service";
+
+@Injectable()
+export class ThesisService {
+  constructor(@Inject(DB) private readonly pool: Pool | null, private readonly market: MarketService) {}
+  private requireDb() { if (!this.pool) throw new ServiceUnavailableException("Supabase is not configured. Add DATABASE_URL to the API environment."); return this.pool; }
+
+  async challenge(input: { symbol: string; thesis: string; userId: string; profile?: unknown }) {
+    if (!process.env.GEMINI_API_KEY) throw new ServiceUnavailableException("Gemini is not configured. Add GEMINI_API_KEY to the API environment.");
+    const analysis = await this.market.analysis(input.symbol, input.userId);
+    const profile = analysis.profile ?? input.profile ?? null;
+    if (!profile) throw new ServiceUnavailableException("Complete Investor DNA before challenging a thesis.");
+    const prompt = `You are THESIS, an educational investment decision coach for first-time investors. Never give buy/sell instructions. Never invent or infer missing financial numbers. Use only the supplied verified market data and the user's profile. Explain finance in plain English. Challenge the user's reasoning, identify assumptions, weigh supporting and contradictory evidence, detect behavioral bias, and give a cautious decision context. Return ONLY valid JSON matching this shape: {"thesisStrength":number,"assumptions":string[],"supportingEvidence":string[],"contradictingEvidence":string[],"biggestAssumption":string,"biases":[{"name":string,"score":number,"reason":string}],"devilAdvocate":string,"decision":"CONSIDER"|"WAIT"|"RETHINK","summary":string}. DATA=${JSON.stringify(analysis)} PROFILE=${JSON.stringify(profile)} USER_THESIS=${JSON.stringify(input.thesis)}`;
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    let text = "";
+    try {
+      const response = await ai.models.generateContent({ model: process.env.GEMINI_MODEL ?? "gemini-2.5-flash", contents: prompt, config: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 1800 } });
+      text = response.text?.trim() ?? "";
+    } catch { throw new ServiceUnavailableException("THESIS could not reach Gemini. Please retry shortly."); }
+    let result: any;
+    try { result = JSON.parse(text); } catch { throw new ServiceUnavailableException("THESIS received an invalid AI response. Please retry."); }
+    if (typeof result.thesisStrength !== "number" || !Array.isArray(result.supportingEvidence) || !Array.isArray(result.contradictingEvidence) || !Array.isArray(result.biases) || !["CONSIDER", "WAIT", "RETHINK"].includes(result.decision)) throw new ServiceUnavailableException("THESIS received an incomplete AI response. Please retry.");
+    return result;
+  }
+
+  async save(input: any) {
+    const pool = this.requireDb();
+    const asset = await this.market.getAsset(input.symbol);
+    const assetRow = await query<{ id: string }>(pool, `INSERT INTO assets(symbol,exchange,name,sector,asset_type) VALUES($1,$2,$3,$4,$5) ON CONFLICT(symbol) DO UPDATE SET exchange=EXCLUDED.exchange,name=EXCLUDED.name,sector=EXCLUDED.sector,asset_type=EXCLUDED.asset_type RETURNING id`, [asset.symbol, asset.exchange, asset.name, asset.sector, asset.assetType]);
+    await query(pool, `INSERT INTO theses(user_id,asset_id,thesis_text,thesis_score,bias_score,decision,analysis_json) VALUES($1,$2,$3,$4,$5,$6,$7)`, [input.userId, assetRow.rows[0].id, input.thesis, input.analysis?.thesisStrength ?? null, input.analysis?.biases?.[0]?.score ?? null, input.analysis?.decision ?? "WAIT", JSON.stringify(input.analysis ?? {})]);
+    return { saved: true };
+  }
+
+  async list(userId: string) {
+    const pool = this.requireDb();
+    return (await query(pool, `SELECT t.id,t.thesis_text,t.thesis_score,t.bias_score,t.decision,t.analysis_json,t.created_at,a.symbol,a.name FROM theses t JOIN assets a ON a.id=t.asset_id WHERE t.user_id=$1 ORDER BY t.created_at DESC`, [userId])).rows;
+  }
+}

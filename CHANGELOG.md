@@ -1,35 +1,52 @@
-# THESIS — final hardening pass
+## 2026-09-13 — v6 Yahoo Finance market-data architecture
+- Replaced previous credit-based market provider as the required market-data provider with Yahoo Finance.
+- Removed the previous credit-based market provider API-key dependency from the default setup.
+- Added Yahoo Finance search and daily historical chart ingestion.
+- Added best-effort Yahoo Finance fundamentals; missing fields remain null.
+- Added NSE/BSE normalization: `.NSE` → `.NS`, `.BSE` → `.BO`.
+- Kept layered in-memory + Supabase caching and in-flight request deduplication.
+- Removed credit-limit-specific UI and messaging.
+- Updated simulation methodology and documentation to identify Yahoo Finance historical data.
+- Preserved the no-fake-data rule: unavailable market/fundamental data remains unavailable.
 
-## Search
-- Fixed stale async search responses overwriting newer queries.
-- Enter now opens the Explore results view with the searched query.
-- Added deterministic autocomplete fallback for common global/Indian companies when the provider is temporarily unavailable.
-- Added server-side response caching to reduce Alpha Vantage request pressure.
-- Search results now carry provider match score ordering.
+# Changelog
 
-## Market data
-- Added BSE fallback for Indian symbols where appropriate.
-- Added weekly-history fallback when daily history is unavailable.
-- Removed fabricated historical charts for live assets. Live assets now show an honest data-unavailable state instead.
-- Asset, chart and news requests are isolated so one failed provider request no longer blanks the entire asset page.
+## 2026-09-13 — Real data + UX polish
 
-## Simulator
-- Replaced the generic quiz-like behavior with an asset-specific scenario engine.
-- Scenarios use revenue growth, profit growth, P/E, quality and risk for the selected company.
-- Behavioral stress test is now tied to the selected company's modeled drawdown.
-- Added explicit interpretation and assumptions so users can understand what drives the result.
-- Added a real simulator landing page instead of a hard-coded NVIDIA route.
-
-## Beginner UX
-- Explore now starts with a question and explains what THESIS does with a searched company.
-- Asset pages clearly label live vs demo data.
-- Simulation is explained as a decision stress test rather than a prediction tool.
-- Missing data produces explicit, useful UI instead of silent failures.
+- Removed seeded/demo market assets and the demo account.
+- Replaced email-based demo scoping with anonymous per-browser UUIDs persisted in Supabase.
+- Removed fake market fallback values and fake AI thesis fallback responses.
+- Live asset pages now fail clearly when the provider does not return enough verified data.
+- Removed automatic placeholder simulation results.
+- Added a dedicated `/thesis/[symbol]/result` page for AI challenge results.
+- Added a full-screen morphing AI reasoning overlay while Gemini is generating a challenge.
+- Added desktop sidebar collapse/expand behavior with persistent preference.
+- Added a modern slide-in mobile navigation drawer with backdrop and close interaction.
+- Refined cards with layered glass surfaces, sheen, depth and motion.
+- Dashboard now reflects only the user's real watchlist and saved theses.
+- Simulator home now searches the live provider instead of listing seeded assets.
+- Investor DNA no longer falls back to a fictional profile.
+- Final decision requires a real completed thesis challenge and a real simulation; it never invents a missing simulation.
+- Removed the old demo database seed script.
 
 
-## Currency + news hardening
-- Currency is now inferred from exchange/ticker metadata instead of treating every non-USD asset as INR. Indian `.BSE`/`.NSE` symbols are explicitly normalized to INR.
-- Asset, Explore, Watchlist and Simulator monetary displays use the asset currency consistently.
-- Alpha Vantage news now tries both exchange-qualified and base tickers (for example `CIANAGRO.BSE` and `CIANAGRO`).
-- Added a live Google News RSS fallback for companies where Alpha Vantage returns no ticker-specific articles, without inventing news.
-- News cards now show source, date and available Alpha Vantage sentiment.
+## 2026-09-13 — Market data provider migration
+
+- Replaced previous market-data provider with previous credit-based market provider across search, quote, historical series and fundamentals.
+- Added exchange-aware normalization for NSE/BSE symbols.
+- Added persistent Supabase/Postgres provider-response caching plus hot in-memory caching.
+- Added graceful quote fallback to the latest verified historical close when the quote endpoint is unavailable.
+- Removed all previous market-data provider environment variables and documentation.
+- Kept Google News RSS as the news source; missing sentiment remains null rather than fabricated.
+
+
+## 2026-09-13 — v5.1 credit-safe previous credit-based market provider pass
+
+- Removed automatic `/statistics` calls from every asset load; the endpoint currently costs 50 credits per symbol.
+- Asset analysis now uses one cached `/time_series` request as its core market-data source.
+- Latest verified close and daily change are derived from the same historical series.
+- Added provider in-flight request deduplication.
+- Added stale Supabase cache fallback when previous credit-based market provider quota is exhausted.
+- Asset page now uses one combined `/bundle` request instead of separately requesting analysis, chart, and news.
+- Search debounce increased and minimum query length raised to reduce unnecessary symbol-search calls.
+- Missing fundamentals remain explicitly unavailable instead of being represented by zero/default data.

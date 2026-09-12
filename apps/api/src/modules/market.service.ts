@@ -3,235 +3,677 @@ import type { Pool } from "pg";
 import { DB } from "../common/db.module";
 import { query } from "../common/db";
 
-type Asset = {
-  symbol: string; exchange: string; name: string; price: number; changePercent: number;
-  sector: string; pe: number; marketCap: number; revenueGrowth: number; profitGrowth: number;
-  debtToEquity: number; volatility: number; maxDrawdown: number; qualityScore: number;
-  riskScore: number; hypeScore: number; personalFit: number; currency?: string;
-  dataSource?: "live" | "demo";
+export type InvestorProfile = {
+  userId: string;
+  goal: string;
+  riskTolerance: string;
+  timeHorizon: string;
+  knowledgeLevel: string;
+  growthPreference: string;
+  incomePreference: string;
 };
 
-type CacheEntry = { expires: number; value: any };
+type Asset = {
+  symbol: string;
+  exchange: string;
+  name: string;
+  assetType: string;
+  sector: string;
+  price: number;
+  changePercent: number;
+  currency: string;
+  pe: number | null;
+  marketCap: number | null;
+  revenueGrowth: number | null;
+  profitGrowth: number | null;
+  debtToEquity: number | null;
+  volatility: number | null;
+  maxDrawdown: number | null;
+  beta: number | null;
+  historicalAnnualizedReturn: number | null;
+  historicalPeriodDays: number | null;
+  qualityScore: number | null;
+  riskScore: number | null;
+  hypeScore: number | null;
+  personalFit: number | null;
+  dataCompleteness: number;
+  dataWarnings: string[];
+  dataProvider: "Yahoo Finance";
+  dataFreshness: "live" | "eod" | "historical";
+};
 
-const CURATED: Asset[] = [
-  {symbol:"RELIANCE",exchange:"NSE",name:"Reliance Industries",price:1482.3,changePercent:1.84,sector:"Energy & Conglomerates",pe:24.6,marketCap:2000000,revenueGrowth:14.2,profitGrowth:18.1,debtToEquity:.38,volatility:38,maxDrawdown:24,qualityScore:88,riskScore:42,hypeScore:29,personalFit:84,currency:"INR",dataSource:"demo"},
-  {symbol:"TCS",exchange:"NSE",name:"Tata Consultancy Services",price:3912,changePercent:-.42,sector:"Information Technology",pe:29.1,marketCap:1400000,revenueGrowth:7.8,profitGrowth:9.4,debtToEquity:.08,volatility:25,maxDrawdown:19,qualityScore:91,riskScore:31,hypeScore:21,personalFit:88,currency:"INR",dataSource:"demo"},
-  {symbol:"HDFCBANK",exchange:"NSE",name:"HDFC Bank",price:1748,changePercent:.61,sector:"Financial Services",pe:19.8,marketCap:1320000,revenueGrowth:13.1,profitGrowth:12.6,debtToEquity:5.9,volatility:28,maxDrawdown:17,qualityScore:86,riskScore:39,hypeScore:25,personalFit:86,currency:"INR",dataSource:"demo"},
-  {symbol:"INFY",exchange:"NSE",name:"Infosys",price:1642,changePercent:1.12,sector:"Information Technology",pe:25.4,marketCap:680000,revenueGrowth:8.2,profitGrowth:10.1,debtToEquity:.11,volatility:27,maxDrawdown:21,qualityScore:87,riskScore:34,hypeScore:24,personalFit:87,currency:"INR",dataSource:"demo"},
-  {symbol:"NVDA",exchange:"NASDAQ",name:"NVIDIA Corporation",price:177.21,changePercent:2.7,sector:"Semiconductors",pe:48.3,marketCap:4300000,revenueGrowth:42,profitGrowth:51,debtToEquity:.18,volatility:62,maxDrawdown:36,qualityScore:92,riskScore:64,hypeScore:87,personalFit:68,currency:"USD",dataSource:"demo"},
-  {symbol:"AAPL",exchange:"NASDAQ",name:"Apple Inc.",price:241.8,changePercent:.66,sector:"Technology",pe:34.7,marketCap:3600000,revenueGrowth:6.4,profitGrowth:8.2,debtToEquity:1.46,volatility:31,maxDrawdown:22,qualityScore:90,riskScore:45,hypeScore:48,personalFit:79,currency:"USD",dataSource:"demo"},
-  {symbol:"MSFT",exchange:"NASDAQ",name:"Microsoft Corporation",price:505.2,changePercent:.88,sector:"Technology",pe:36.1,marketCap:3760000,revenueGrowth:15.4,profitGrowth:16.9,debtToEquity:.32,volatility:26,maxDrawdown:19,qualityScore:94,riskScore:38,hypeScore:54,personalFit:83,currency:"USD",dataSource:"demo"},
-  {symbol:"TSLA",exchange:"NASDAQ",name:"Tesla Inc.",price:347.4,changePercent:-1.32,sector:"Automotive & Energy",pe:168,revenueGrowth:7.1,profitGrowth:-19.4,debtToEquity:.84,marketCap:1100000,volatility:69,maxDrawdown:49,qualityScore:67,riskScore:78,hypeScore:90,personalFit:52,currency:"USD",dataSource:"demo"}
-];
+type CacheEntry = { expires: number; value: unknown };
+type PricePoint = { date: string; price: number; volume: number };
+type NewsItem = { title: string; source: string; url: string; time: string; sentiment: number | null; summary?: string };
 
-// Useful offline autocomplete coverage. It is metadata only; prices/fundamentals still come from Alpha Vantage.
-const CATALOG = [
-  ["RELIANCE","Reliance Industries","India"],["TCS","Tata Consultancy Services","India"],["INFY","Infosys","India"],["HDFCBANK","HDFC Bank","India"],["ICICIBANK","ICICI Bank","India"],["SBIN","State Bank of India","India"],["ITC","ITC Limited","India"],["LT","Larsen & Toubro","India"],["BHARTIARTL","Bharti Airtel","India"],["MARUTI","Maruti Suzuki India","India"],["SUNPHARMA","Sun Pharmaceutical Industries","India"],["TITAN","Titan Company","India"],["ADANIENT","Adani Enterprises","India"],["ADANIPORTS","Adani Ports","India"],["WIPRO","Wipro","India"],["AXISBANK","Axis Bank","India"],["KOTAKBANK","Kotak Mahindra Bank","India"],["ASIANPAINT","Asian Paints","India"],["HINDUNILVR","Hindustan Unilever","India"],["BAJFINANCE","Bajaj Finance","India"],
-  ["NVDA","NVIDIA Corporation","United States"],["AAPL","Apple Inc.","United States"],["MSFT","Microsoft Corporation","United States"],["AMZN","Amazon.com Inc.","United States"],["GOOGL","Alphabet Inc.","United States"],["META","Meta Platforms Inc.","United States"],["TSLA","Tesla Inc.","United States"],["AVGO","Broadcom Inc.","United States"],["NFLX","Netflix Inc.","United States"],["AMD","Advanced Micro Devices","United States"],["JPM","JPMorgan Chase","United States"],["V","Visa Inc.","United States"],["WMT","Walmart Inc.","United States"],["COST","Costco Wholesale","United States"]
-].map(([symbol,name,exchange]) => ({symbol,name,exchange}));
+type ProviderRef = { symbol: string; exchange?: string };
 
 @Injectable()
 export class MarketService {
   private readonly cache = new Map<string, CacheEntry>();
+  private readonly inflight = new Map<string, Promise<unknown>>();
+
   constructor(@Inject(DB) private readonly pool: Pool | null) {}
 
   private cacheGet<T>(key: string): T | null {
     const hit = this.cache.get(key);
-    if (!hit || hit.expires < Date.now()) { if (hit) this.cache.delete(key); return null; }
+    if (!hit || hit.expires < Date.now()) {
+      if (hit) this.cache.delete(key);
+      return null;
+    }
     return hit.value as T;
   }
-  private cacheSet(key: string, value: any, ttlMs: number) { this.cache.set(key, {expires: Date.now()+ttlMs, value}); }
 
-  private async av(params: Record<string,string>, ttlMs = 5 * 60_000) {
-    const key = JSON.stringify(params);
-    const cached = this.cacheGet<any>(key); if (cached) return cached;
-    const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
-    if (!apiKey) return null;
-    try {
-      const u = new URL("https://www.alphavantage.co/query");
-      Object.entries({...params, apikey:apiKey}).forEach(([k,v]) => u.searchParams.set(k,v));
-      const r = await fetch(u, {signal: AbortSignal.timeout(9000), headers:{accept:"application/json"}});
-      if (!r.ok) return null;
-      const j = await r.json() as any;
-      if (j?.Note || j?.Information || j?.Error) {
-        console.warn("Alpha Vantage response:", j?.Note || j?.Information || j?.Error);
-        return null;
-      }
-      this.cacheSet(key,j,ttlMs); return j;
-    } catch { return null; }
+  private cacheSet(key: string, value: unknown, ttlMs: number) {
+    this.cache.set(key, { expires: Date.now() + ttlMs, value });
   }
 
-  private inferCurrency(symbol:string, exchange:string, providerCurrency?:string) {
+  /**
+   * Market-provider cache.
+   *
+   * Yahoo Finance is the primary provider and does not require an API key.
+   * Responses are cached in memory and, when Supabase is configured, in
+   * Postgres so a restart does not immediately repeat the same upstream call.
+   */
+  private async yahooRequest<T = any>(path: string, params: Record<string, string>, ttlMs: number): Promise<T> {
+    const key = `yahoo:${path}:${JSON.stringify(params)}`;
+    const memory = this.cacheGet<T>(key);
+    if (memory !== null) return memory;
+
+    const running = this.inflight.get(key) as Promise<T> | undefined;
+    if (running) return running;
+
+    const request = (async () => {
+      if (this.pool) {
+        try {
+          const stored = await query<{ payload: T; expires_at: string }>(
+            this.pool,
+            `SELECT payload, expires_at FROM market_data_cache WHERE cache_key=$1 LIMIT 1`,
+            [key],
+          );
+          const row = stored.rows[0];
+          if (row?.payload) {
+            const expires = Date.parse(row.expires_at);
+            if (Number.isFinite(expires) && expires > Date.now()) {
+              this.cacheSet(key, row.payload, Math.min(ttlMs, 10 * 60_000));
+              return row.payload;
+            }
+          }
+        } catch {
+          // Persistent caching is an optimization, never a correctness dependency.
+        }
+      }
+
+      const url = new URL(`https://query1.finance.yahoo.com${path}`);
+      for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
+
+      try {
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(12_000),
+          headers: {
+            accept: "application/json",
+            "user-agent": "THESIS-Educational-Investment-Coach/1.0",
+          },
+        });
+        const json = await response.json().catch(() => ({}));
+
+        if (!response.ok || json?.finance?.error || json?.chart?.error) {
+          const message = String(
+            json?.finance?.error?.description ||
+            json?.chart?.error?.description ||
+            `Yahoo Finance HTTP ${response.status}`,
+          );
+
+          // If the provider throttles us, use the last verified response if one exists.
+          if (response.status === 429 || /too many|rate|crumb|unauthorized/i.test(message)) {
+            if (this.pool) {
+              try {
+                const stale = await query<{ payload: T }>(
+                  this.pool,
+                  `SELECT payload FROM market_data_cache WHERE cache_key=$1 LIMIT 1`,
+                  [key],
+                );
+                if (stale.rows[0]?.payload) {
+                  this.cacheSet(key, stale.rows[0].payload, 60_000);
+                  return stale.rows[0].payload;
+                }
+              } catch {
+                // Continue to a clear provider error.
+              }
+            }
+            throw new ServiceUnavailableException(
+              "Yahoo Finance is temporarily rate-limiting this request and THESIS has no cached copy yet. Please retry shortly.",
+            );
+          }
+
+          throw new ServiceUnavailableException(`Yahoo Finance could not return this data: ${message}`);
+        }
+
+        this.cacheSet(key, json, ttlMs);
+
+        if (this.pool) {
+          try {
+            await query(
+              this.pool,
+              `INSERT INTO market_data_cache(cache_key,payload,expires_at)
+               VALUES($1,$2::jsonb,now()+($3::bigint * interval '1 millisecond'))
+               ON CONFLICT(cache_key) DO UPDATE SET payload=EXCLUDED.payload,expires_at=EXCLUDED.expires_at`,
+              [key, JSON.stringify(json), ttlMs],
+            );
+          } catch {
+            // Cache writes must never break a successful market-data response.
+          }
+        }
+
+        return json as T;
+      } catch (error) {
+        if (error instanceof ServiceUnavailableException) throw error;
+        throw new ServiceUnavailableException(
+          "Yahoo Finance could not be reached. The provider is temporarily unavailable; please retry shortly.",
+        );
+      }
+    })();
+
+    this.inflight.set(key, request);
+    try {
+      return await request;
+    } finally {
+      this.inflight.delete(key);
+    }
+  }
+
+  private num(value: unknown): number | null {
+    if (value === null || value === undefined || value === "" || value === "None" || value === "N/A" || value === "-") return null;
+    const n = Number(String(value).replace(/[%,$]/g, ""));
+    return Number.isFinite(n) ? n : null;
+  }
+
+  private percent(value: unknown) {
+    return this.num(value);
+  }
+
+  private currency(symbol: string, exchange: string, provider?: string) {
     const s = symbol.toUpperCase();
     const e = exchange.toUpperCase();
-    if (s.endsWith(".BSE") || s.endsWith(".NSE") || e.includes("BSE") || e.includes("NSE") || e === "INDIA") return "INR";
-    if (providerCurrency && /^[A-Z]{3}$/.test(providerCurrency)) return providerCurrency;
+    if (provider && /^[A-Z]{3}$/.test(provider)) return provider;
+    if (s.endsWith(".BSE") || s.endsWith(".NSE") || e.includes("BSE") || e.includes("NSE") || e.includes("INDIA") || e.includes("BOMBAY")) return "INR";
     return "USD";
   }
 
-  private newsCandidates(symbol:string) {
-    const s = decodeURIComponent(symbol).toUpperCase();
-    const base = s.split(".")[0];
-    return Array.from(new Set([s, base].filter(Boolean)));
+  private providerRef(symbol: string): ProviderRef {
+    const s = decodeURIComponent(symbol).trim().toUpperCase();
+    if (s.endsWith(".BSE") || s.endsWith(".BO")) return { symbol: s.replace(/\.(BSE|BO)$/, ""), exchange: "BSE" };
+    if (s.endsWith(".NSE") || s.endsWith(".NS")) return { symbol: s.replace(/\.(NSE|NS)$/, ""), exchange: "NSE" };
+    return { symbol: s };
   }
 
-  private async googleNews(query:string) {
-    const key = `google-news:${query.toLowerCase()}`;
-    const cached = this.cacheGet<any[]>(key);
+  private yahooSymbol(symbol: string) {
+    const ref = this.providerRef(symbol);
+    if (ref.exchange === "BSE") return `${ref.symbol}.BO`;
+    if (ref.exchange === "NSE") return `${ref.symbol}.NS`;
+    return ref.symbol;
+  }
+
+  private appSymbol(providerSymbol: string, exchange?: string) {
+    const raw = String(providerSymbol || "").toUpperCase();
+    if (raw.endsWith(".BO")) return `${raw.slice(0, -3)}.BSE`;
+    if (raw.endsWith(".NS")) return `${raw.slice(0, -3)}.NSE`;
+
+    const ex = String(exchange || "").toUpperCase();
+    if (ex.includes("BOMBAY") || ex === "BSE" || ex === "XBOM") return `${raw}.BSE`;
+    if (ex.includes("NATIONAL STOCK") || ex === "NSE" || ex === "XNSE" || ex === "NSI") return `${raw}.NSE`;
+    return raw;
+  }
+
+  private parseYahooChart(remote: any): { series: PricePoint[]; meta: any } {
+    const result = remote?.chart?.result?.[0];
+    if (!result) return { series: [], meta: {} };
+
+    const timestamps: number[] = Array.isArray(result.timestamp) ? result.timestamp : [];
+    const quote = result?.indicators?.quote?.[0] || {};
+    const closes = Array.isArray(quote.close) ? quote.close : [];
+    const volumes = Array.isArray(quote.volume) ? quote.volume : [];
+
+    const series = timestamps.map((ts, i) => ({
+      date: new Date(Number(ts) * 1000).toISOString().slice(0, 10),
+      price: Number(closes[i]),
+      volume: Number(volumes[i] || 0),
+    })).filter((x: PricePoint) => x.date && Number.isFinite(x.price) && x.price > 0);
+
+    return { series, meta: result.meta || {} };
+  }
+
+  private async yahooChart(symbol: string) {
+    const yahoo = this.yahooSymbol(symbol);
+    const remote = await this.yahooRequest<any>(
+      `/v8/finance/chart/${encodeURIComponent(yahoo)}`,
+      {
+        range: "2y",
+        interval: "1d",
+        events: "div,splits",
+        includeAdjustedClose: "true",
+      },
+      12 * 60 * 60_000,
+    );
+    return this.parseYahooChart(remote);
+  }
+
+  private async yahooFundamentals(symbol: string): Promise<any | null> {
+    // Yahoo's quoteSummary endpoint is best-effort. It may be unavailable for
+    // some instruments/regions; THESIS leaves those fundamentals blank rather
+    // than inventing them.
+    const yahoo = this.yahooSymbol(symbol);
+    try {
+      return await this.yahooRequest<any>(
+        `/v10/finance/quoteSummary/${encodeURIComponent(yahoo)}`,
+        {
+          modules: "price,summaryDetail,defaultKeyStatistics,financialData,assetProfile",
+        },
+        24 * 60 * 60_000,
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  private async priceSeries(symbol: string): Promise<PricePoint[]> {
+    const result = await this.yahooChart(symbol);
+    return result.series;
+  }
+
+  private historyMetrics(series: PricePoint[]) {
+    if (series.length < 8) {
+      return { volatility: null, maxDrawdown: null, abnormalVolume: null, priceAcceleration: null, annualizedReturn: null, periodDays: null };
+    }
+    const prices = series.map(x => x.price).filter(Number.isFinite);
+    const firstDate = Date.parse(series[0].date);
+    const lastDate = Date.parse(series[series.length - 1].date);
+    const periodDays = Number.isFinite(firstDate) && Number.isFinite(lastDate)
+      ? Math.max(1, Math.round((lastDate - firstDate) / 86_400_000))
+      : null;
+    const annualizedReturn = periodDays && prices[0] > 0 && prices[prices.length - 1] > 0
+      ? (Math.pow(prices[prices.length - 1] / prices[0], 365 / periodDays) - 1) * 100
+      : null;
+    const returns = prices.slice(1).map((p, i) => p / prices[i] - 1).filter(Number.isFinite);
+    const mean = returns.length ? returns.reduce((s, x) => s + x, 0) / returns.length : 0;
+    const variance = returns.length ? returns.reduce((s, x) => s + (x - mean) ** 2, 0) / returns.length : 0;
+    const volatility = returns.length ? Math.min(100, Math.sqrt(variance) * Math.sqrt(252) * 100) : null;
+    let peak = prices[0];
+    let maxDrawdown = 0;
+    for (const p of prices) {
+      peak = Math.max(peak, p);
+      if (peak > 0) maxDrawdown = Math.max(maxDrawdown, ((peak - p) / peak) * 100);
+    }
+    const volumes = series.map(x => x.volume).filter(x => x > 0);
+    const recent = volumes.slice(-10);
+    const baseline = volumes.slice(0, -10);
+    const avg = (xs: number[]) => xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0;
+    const abnormalVolume = baseline.length && avg(baseline) > 0
+      ? Math.min(100, Math.max(0, (avg(recent) / avg(baseline) - 1) * 100))
+      : null;
+    const window = Math.min(20, prices.length - 1);
+    const old = prices[prices.length - 1 - window];
+    const recentReturn = old > 0 ? (prices[prices.length - 1] / old - 1) * 100 : 0;
+    const priceAcceleration = Math.min(100, Math.max(0, recentReturn * 2));
+    return { volatility, maxDrawdown, abnormalVolume, priceAcceleration, annualizedReturn, periodDays };
+  }
+
+  private weighted(values: Array<[number | null, number]>) {
+    const available = values.filter(([v]) => v !== null && Number.isFinite(v));
+    if (!available.length) return null;
+    const weight = available.reduce((s, [, w]) => s + w, 0);
+    return Math.round(available.reduce((s, [v, w]) => s + Number(v) * w, 0) / weight);
+  }
+
+  private risk(a: Asset) {
+    const debtRisk = a.debtToEquity === null ? null : Math.min(100, a.debtToEquity >= 3 ? 100 : Math.max(0, a.debtToEquity * 22));
+    const earningsInstability = a.profitGrowth === null ? null : Math.min(100, Math.abs(a.profitGrowth - 10) * 3);
+    const valuation = a.pe === null ? null : Math.min(100, Math.max(0, (a.pe - 18) * 2.2));
+    const betaRisk = a.beta === null ? null : Math.min(100, Math.max(0, (a.beta - 0.5) * 55));
+    return this.weighted([[a.volatility, .30], [a.maxDrawdown, .20], [debtRisk, .15], [earningsInstability, .15], [valuation, .10], [betaRisk, .10]]);
+  }
+
+  private quality(a: Asset) {
+    const growth = a.revenueGrowth === null ? null : Math.max(0, Math.min(100, 50 + a.revenueGrowth * 2));
+    const profit = a.profitGrowth === null ? null : Math.max(0, Math.min(100, 50 + a.profitGrowth * 2));
+    const leverage = a.debtToEquity === null ? null : Math.max(0, 100 - Math.min(100, a.debtToEquity * 18));
+    const valuation = a.pe === null ? null : Math.max(0, 100 - Math.min(100, Math.max(0, a.pe - 12) * 1.5));
+    return this.weighted([[growth, .30], [profit, .35], [leverage, .20], [valuation, .15]]);
+  }
+
+  private hype(a: Asset, news: NewsItem[], history: ReturnType<MarketService["historyMetrics"]>) {
+    const sentimentValues = news.map(x => x.sentiment).filter((x): x is number => x !== null && Number.isFinite(x));
+    const sentimentIntensity = sentimentValues.length ? Math.min(100, Math.abs(sentimentValues.reduce((s, x) => s + x, 0) / sentimentValues.length) * 100) : null;
+    const newsVolume = news.length ? Math.min(100, news.length * 12.5) : null;
+    const divergence = a.revenueGrowth === null || a.pe === null || history.priceAcceleration === null
+      ? null
+      : Math.max(0, Math.min(100, history.priceAcceleration - Math.max(0, a.revenueGrowth * 1.2) + Math.max(0, a.pe - 25) * .6));
+    return this.weighted([[history.priceAcceleration, .30], [newsVolume, .20], [sentimentIntensity, .20], [history.abnormalVolume, .15], [divergence, .15]]);
+  }
+
+  private fit(a: Asset, p: InvestorProfile) {
+    if (a.riskScore === null || a.volatility === null) return null;
+    const target = p.riskTolerance === "aggressive-buy" || p.riskTolerance === "buy" ? 72 : p.riskTolerance === "sell" || p.riskTolerance === "probably-sell" ? 28 : 50;
+    const riskCompat = Math.max(0, 100 - Math.abs(a.riskScore - target) * 1.5);
+    const longHorizon = ["5-10", "10+"].includes(p.timeHorizon);
+    const horizonCompat = longHorizon ? (a.volatility > 60 ? 72 : 92) : (a.volatility > 60 ? 35 : 75);
+    const growthWant = p.goal === "aggressive" || p.growthPreference === "growth";
+    const growthCompat = a.revenueGrowth === null ? null : growthWant
+      ? Math.min(100, 50 + Math.max(0, a.revenueGrowth) * 1.4)
+      : Math.max(0, 90 - Math.max(0, a.revenueGrowth - 15) * 1.2);
+    const incomeCompat = a.debtToEquity === null ? null : p.incomePreference === "income" ? (a.debtToEquity < 2 ? 75 : 45) : 80;
+    const hypePenalty = a.hypeScore === null ? null : Math.max(0, a.hypeScore - 65) * .35;
+    return this.weighted([[riskCompat, .40], [horizonCompat, .25], [growthCompat, .18], [incomeCompat, .10], [hypePenalty === null ? null : 100 - hypePenalty, .07]]);
+  }
+
+  private flattenNumbers(value: unknown, path = "", out: Record<string, number> = {}) {
+    if (!value || typeof value !== "object") return out;
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const next = path ? `${path}.${normalized}` : normalized;
+      const numeric = this.num(child);
+      if (numeric !== null) out[next] = numeric;
+      if (child && typeof child === "object") this.flattenNumbers(child, next, out);
+    }
+    return out;
+  }
+
+  private pickStat(flat: Record<string, number>, keys: string[]) {
+    for (const key of keys) {
+      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const exact = Object.entries(flat).find(([path]) => path.split(".").pop() === normalized);
+      if (exact) return exact[1];
+    }
+    return null;
+  }
+
+  private async newsFeed(symbol: string, companyName?: string): Promise<NewsItem[]> {
+    const q = companyName ? `${companyName} stock shares` : `${decodeURIComponent(symbol)} stock shares`;
+    const key = `google-news:${q.toLowerCase()}`;
+    const cached = this.cacheGet<NewsItem[]>(key);
     if (cached) return cached;
     try {
-      const u = new URL("https://news.google.com/rss/search");
-      u.searchParams.set("q", query);
-      u.searchParams.set("hl", "en-IN");
-      u.searchParams.set("gl", "IN");
-      u.searchParams.set("ceid", "IN:en");
-      const r = await fetch(u, {signal: AbortSignal.timeout(8000), headers:{accept:"application/rss+xml, application/xml, text/xml"}});
-      if (!r.ok) return [];
-      const xml = await r.text();
-      const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)].map(m => m[1]);
-      const clean = (value:string) => value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,"$1").replace(/<[^>]+>/g,"").replace(/&amp;/g,"&").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,"<").replace(/&gt;/g,">").trim();
-      const extract = (item:string, tag:string) => {
-        const m = item.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "i"));
-        return m ? clean(m[1]) : "";
+      const url = new URL("https://news.google.com/rss/search");
+      url.searchParams.set("q", q);
+      url.searchParams.set("hl", "en-IN");
+      url.searchParams.set("gl", "IN");
+      url.searchParams.set("ceid", "IN:en");
+      const response = await fetch(url, { signal: AbortSignal.timeout(8_000), headers: { accept: "application/rss+xml, application/xml, text/xml" } });
+      if (!response.ok) return [];
+      const xml = await response.text();
+      const clean = (v: string) => v.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+      const extract = (item: string, tag: string) => {
+        const match = item.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "i"));
+        return match ? clean(match[1]) : "";
       };
-      const result = items.slice(0,8).map(item => ({
-        title: extract(item,"title"),
-        url: extract(item,"link"),
-        source: extract(item,"source") || "Google News",
-        time: extract(item,"pubDate"),
-        sentiment: 0,
-        summary: ""
-      })).filter(x => x.title && x.url);
-      this.cacheSet(key, result, 10*60_000);
+      const result = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)]
+        .slice(0, 8)
+        .map(m => ({
+          title: extract(m[1], "title"),
+          source: extract(m[1], "source") || "Google News",
+          url: extract(m[1], "link"),
+          time: extract(m[1], "pubDate"),
+          sentiment: null,
+        }))
+        .filter(x => x.title && x.url);
+      this.cacheSet(key, result, 10 * 60_000);
       return result;
-    } catch { return []; }
+    } catch {
+      return [];
+    }
   }
 
   async search(q = "") {
     const term = q.trim();
-    if (!term) return CURATED;
-    const remote = await this.av({function:"SYMBOL_SEARCH",keywords:term}, 30*60_000);
-    const matches = Array.isArray(remote?.bestMatches) ? remote.bestMatches.map((x:any) => ({
-      symbol:x["1. symbol"], name:x["2. name"], exchange:x["4. region"] || "Global",
-      sector:x["3. type"] || "Equity", price:null, changePercent:null, personalFit:null,
-      riskScore:null, hypeScore:null, currency:this.inferCurrency(String(x["1. symbol"]||""), String(x["4. region"]||"Global"), String(x["8. currency"]||"")), matchScore:Number(x["9. matchScore"]||0)
-    })).filter((x:any)=>x.symbol&&x.name) : [];
-    if (matches.length) return matches.sort((a:any,b:any)=>b.matchScore-a.matchScore).slice(0,12);
-    const n = term.toUpperCase();
-    const curated = CURATED.filter(a=>`${a.symbol} ${a.name} ${a.sector}`.toUpperCase().includes(n));
-    const catalog = CATALOG.filter((a:any)=>`${a.symbol} ${a.name} ${a.exchange}`.toUpperCase().includes(n));
-    const merged = [...curated,...catalog.filter((a:any)=>!curated.some(c=>c.symbol===a.symbol))];
-    return merged.slice(0,12);
-  }
+    if (term.length < 2) return [];
 
-  private clone(a:Asset) { return {...a}; }
-  private providerSymbols(symbol:string) {
-    const s = symbol.toUpperCase();
-    if (s.includes(".")) return [s];
-    // Alpha Vantage documents BSE symbols such as RELIANCE.BSE; try the plain ticker too for US/global names.
-    return [s, `${s}.BSE`];
-  }
+    const remote = await this.yahooRequest<any>(
+      "/v1/finance/search",
+      {
+        q: term,
+        quotesCount: "20",
+        newsCount: "0",
+        enableFuzzyQuery: "true",
+      },
+      24 * 60 * 60_000,
+    );
 
-  async getAsset(symbol:string): Promise<Asset> {
-    const requested = decodeURIComponent(symbol).toUpperCase();
-    const curated = CURATED.find(a => a.symbol===requested || `${a.symbol}.BSE`===requested);
-    const providerList = this.providerSymbols(requested);
-
-    for (const candidate of providerList) {
-      const [quote, overview] = await Promise.all([
-        this.av({function:"GLOBAL_QUOTE",symbol:candidate}),
-        this.av({function:"OVERVIEW",symbol:candidate}, 30*60_000)
-      ]);
-      const q = quote?.["Global Quote"] ?? {};
-      const o = overview ?? {};
-      const price = Number(q["05. price"] || 0);
-      if (price > 0 || Object.keys(o).length > 3) {
-        if (curated) {
-          const a = this.clone(curated); a.dataSource="live";
-          if (price > 0) { a.price=price; a.changePercent=Number(String(q["10. change percent"]??0).replace("%","")); }
-          return a;
-        }
-        const a:Asset = {
-          symbol:candidate, exchange:String(o.Exchange||"Global"), name:String(o.Name||candidate),
-          price, changePercent:Number(String(q["10. change percent"]||0).replace("%","")),
-          sector:String(o.Sector||o.Industry||"Equity"), pe:Number(o.PERatio)||0,
-          marketCap:Number(o.MarketCapitalization)||0,
-          revenueGrowth:Number(String(o.QuarterlyRevenueGrowthYOY||0).replace("%",""))||0,
-          profitGrowth:Number(String(o.QuarterlyEarningsGrowthYOY||0).replace("%",""))||0,
-          debtToEquity:Number(o.DebtToEquity)||0, volatility:45, maxDrawdown:30,
-          qualityScore:72, riskScore:52, hypeScore:45, personalFit:74,
-          currency:this.inferCurrency(candidate, String(o.Exchange||"Global"), String(o.Currency||"")), dataSource:"live"
+    const rows = Array.isArray(remote?.quotes) ? remote.quotes : [];
+    return rows
+      .filter((x: any) => x.symbol && x.quoteType !== "CURRENCY")
+      .map((x: any) => {
+        const providerSymbol = String(x.symbol);
+        const exchange = String(x.exchange || x.fullExchangeName || "");
+        return {
+          symbol: this.appSymbol(providerSymbol, exchange),
+          name: String(x.longname || x.shortname || providerSymbol),
+          exchange: exchange || "Global",
+          sector: String(x.sector || "Equity"),
+          currency: String(x.currency || this.currency(providerSymbol, exchange)),
+          matchScore: null,
+          providerSymbol,
+          micCode: String(x.exchange || ""),
         };
-        return this.deriveScores(a);
-      }
+      })
+      .slice(0, 12);
+  }
+
+  async getProfile(userId: string): Promise<InvestorProfile | null> {
+    if (!this.pool) return null;
+    const result = await query<any>(
+      this.pool,
+      `SELECT user_id AS "userId", goal, risk_tolerance AS "riskTolerance", time_horizon AS "timeHorizon", knowledge_level AS "knowledgeLevel", growth_preference AS "growthPreference", income_preference AS "incomePreference"
+       FROM investor_profiles WHERE user_id=$1 LIMIT 1`,
+      [userId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async getAsset(symbol: string): Promise<Asset> {
+    const requested = decodeURIComponent(symbol).trim().toUpperCase();
+
+    // One historical Yahoo Finance chart request is the core market-data call.
+    // The chart contains the verified daily closes/volume plus instrument metadata.
+    const chartResult = await this.yahooChart(requested);
+    const history = chartResult.series;
+    const meta = chartResult.meta || {};
+
+    if (!history.length) {
+      throw new ServiceUnavailableException(
+        `No verified market data was returned for ${requested}. Try the exact ticker shown by search.`,
+      );
     }
 
-    if (curated) return this.clone(curated);
-    throw new ServiceUnavailableException(`Live market data is unavailable for ${requested}. Check ALPHA_VANTAGE_API_KEY or try again after the provider limit resets.`);
-  }
+    const latest = history[history.length - 1];
+    const previous = history.length > 1 ? history[history.length - 2] : null;
+    const price = this.num(latest.price);
 
-  private risk(a:Asset) {
-    return Math.round(.30*Math.min(100,a.volatility)+.20*Math.min(100,a.maxDrawdown*1.6)+.15*Math.min(100,a.debtToEquity*20)+.15*Math.min(100,Math.abs(a.profitGrowth-10)*3)+.10*Math.min(100,Math.max(0,(a.pe-18)*2.2))+.10*Math.min(100,a.volatility));
-  }
-  private deriveScores(a:Asset) {
-    a.riskScore=this.risk(a);
-    a.hypeScore=Math.round(Math.min(100,Math.max(0,a.hypeScore+Math.max(0,a.changePercent)*1.5+Math.max(0,a.pe-30)*.25)));
-    a.personalFit=Math.max(0,Math.min(100,Math.round(a.qualityScore*.35+(100-a.riskScore)*.3+Math.min(100,a.revenueGrowth*4)*.2+(100-a.hypeScore)*.15)));
-    return a;
-  }
-
-  async analysis(symbol:string) {
-    const a=this.deriveScores(await this.getAsset(symbol));
-    return {asset:a,market:{price:a.price,changePercent:a.changePercent},fundamentals:{pe:a.pe,marketCap:a.marketCap,revenueGrowth:a.revenueGrowth,profitGrowth:a.profitGrowth,debtToEquity:a.debtToEquity},risk:{score:a.riskScore,level:a.riskScore<=30?"low":a.riskScore<=60?"moderate":a.riskScore<=80?"high":"very-high"},hype:{score:a.hypeScore,level:a.hypeScore<=30?"low":a.hypeScore<=60?"moderate":a.hypeScore<=80?"high":"extreme"},quality:{score:a.qualityScore},personalFit:{score:a.personalFit},explanation:a.hypeScore>70?"Attention is elevated relative to the underlying fundamentals. Popularity is not evidence of future returns.":"Attention looks comparatively measured; the bigger question is whether future growth justifies today’s price."};
-  }
-
-  async chart(symbol:string) {
-    const requested=decodeURIComponent(symbol).toUpperCase();
-    const candidates=this.providerSymbols(requested);
-    for (const candidate of candidates) {
-      const remote=await this.av({function:"TIME_SERIES_DAILY",symbol:candidate,outputsize:"compact"},15*60_000);
-      const series=remote?.["Time Series (Daily)"];
-      if (series) return Object.entries(series).slice(0,100).reverse().map(([date,v]:any)=>({date,price:Number(v["4. close"]),volume:Number(v["5. volume"])}));
-      const weekly=await this.av({function:"TIME_SERIES_WEEKLY",symbol:candidate},30*60_000);
-      const w=weekly?.["Weekly Time Series"];
-      if (w) return Object.entries(w).slice(0,52).reverse().map(([date,v]:any)=>({date,price:Number(v["4. close"]),volume:Number(v["5. volume"])}));
-    }
-    const a=await this.getAsset(requested);
-    // Only demo assets get a deterministic visual fallback; never fabricate a history for live assets.
-    if (a.dataSource === "demo") return Array.from({length:70},(_,i)=>({date:`D-${69-i}`,price:Number((a.price*(.94+i*.0012+Math.sin(i/4)*.009)).toFixed(2)),volume:0}));
-    throw new ServiceUnavailableException(`Historical price data is unavailable for ${a.symbol}.`);
-  }
-
-  async news(symbol:string) {
-    const candidates = this.newsCandidates(symbol);
-    for (const ticker of candidates) {
-      const remote = await this.av({function:"NEWS_SENTIMENT",tickers:ticker,limit:"8",sort:"LATEST"},10*60_000);
-      const feed = Array.isArray(remote?.feed) ? remote.feed : [];
-      if (feed.length) {
-        return feed.slice(0,8).map((x:any)=>({
-          title:x.title,
-          source:x.source || "Alpha Vantage",
-          url:x.url,
-          time:x.time_published,
-          sentiment:Number(x.overall_sentiment_score)||0,
-          summary:x.summary || ""
-        }));
-      }
+    if (price === null || price <= 0) {
+      throw new ServiceUnavailableException(`Yahoo Finance returned an invalid historical close for ${requested}.`);
     }
 
-    // Alpha Vantage can have ticker coverage gaps, especially for smaller exchanges.
-    // Use Google News RSS as a no-key fallback rather than manufacturing stories.
-    const requested = decodeURIComponent(symbol).toUpperCase();
-    const catalog = CATALOG.find((x:any)=>x.symbol===requested || `${x.symbol}.BSE`===requested || `${x.symbol}.NSE`===requested);
-    const curated = CURATED.find(a=>a.symbol===requested || `${a.symbol}.BSE`===requested);
-    const name = curated?.name || catalog?.name || requested.replace(/\.(BSE|NSE)$/i,"");
-    const query = `${name} stock shares`;
-    return this.googleNews(query);
+    const previousClose = this.num(previous?.price);
+    const changePercent = previousClose && previousClose > 0
+      ? ((price - previousClose) / previousClose) * 100
+      : 0;
+
+    const historyMetrics = this.historyMetrics(history);
+
+    // Fundamentals are optional. Yahoo Finance may not expose quoteSummary for
+    // every exchange/instrument. Missing values remain null.
+    const fundamentals = await this.yahooFundamentals(requested);
+    const summary = fundamentals?.quoteSummary?.result?.[0] || {};
+    const flat = this.flattenNumbers(summary);
+
+    const pe = this.pickStat(flat, [
+      "trailingpe", "forwardpe", "pe_ratio", "pe", "price_to_earnings",
+    ]);
+    const marketCap = this.pickStat(flat, [
+      "marketcap", "marketcapitalization",
+    ]);
+    const revenueGrowth = this.pickStat(flat, [
+      "revenuegrowth", "revenue_growth", "revenuegrowthyoy",
+    ]);
+    const profitGrowth = this.pickStat(flat, [
+      "earningsgrowth", "profitgrowth", "netincomegrowth", "epsgrowth",
+    ]);
+    const debtToEquity = this.pickStat(flat, [
+      "debtequity", "debttoequity", "debt_equity",
+    ]);
+    const beta = this.pickStat(flat, [
+      "beta", "beta3year", "beta5yearmonthly",
+    ]);
+
+    const providerSymbol = String(meta.symbol || this.yahooSymbol(requested));
+    const providerExchange = String(meta.fullExchangeName || meta.exchangeName || meta.exchange || "");
+    const appSym = this.appSymbol(providerSymbol, providerExchange);
+    const exchange = providerExchange || (
+      this.providerRef(requested).exchange === "BSE" ? "BSE" :
+      this.providerRef(requested).exchange === "NSE" ? "NSE" : "Global"
+    );
+    const name = String(
+      meta.longName ||
+      meta.shortName ||
+      summary?.price?.longName?.raw ||
+      summary?.price?.shortName?.raw ||
+      requested,
+    );
+    const currency = this.currency(appSym, exchange, String(meta.currency || summary?.price?.currency || ""));
+    const sector = String(summary?.assetProfile?.sector || "Not available");
+
+    const asset: Asset = {
+      symbol: appSym,
+      exchange,
+      name,
+      assetType: String(meta.instrumentType || "Equity"),
+      sector,
+      price,
+      changePercent,
+      currency,
+      pe,
+      marketCap,
+      revenueGrowth,
+      profitGrowth,
+      debtToEquity,
+      volatility: historyMetrics.volatility,
+      maxDrawdown: historyMetrics.maxDrawdown,
+      beta,
+      historicalAnnualizedReturn: historyMetrics.annualizedReturn,
+      historicalPeriodDays: historyMetrics.periodDays,
+      qualityScore: null,
+      riskScore: null,
+      hypeScore: null,
+      personalFit: null,
+      dataCompleteness: 0,
+      dataWarnings: [],
+      dataProvider: "Yahoo Finance",
+      dataFreshness: "eod",
+    };
+
+    const news = await this.newsFeed(asset.symbol, asset.name);
+    asset.qualityScore = this.quality(asset);
+    asset.riskScore = this.risk(asset);
+    asset.hypeScore = this.hype(asset, news, historyMetrics);
+
+    const fields = [asset.price, asset.pe, asset.marketCap, asset.revenueGrowth, asset.profitGrowth, asset.debtToEquity, asset.volatility, asset.maxDrawdown, asset.beta];
+    asset.dataCompleteness = Math.round(fields.filter(x => x !== null).length / fields.length * 100);
+
+    if (asset.pe === null) asset.dataWarnings.push("P/E is unavailable from Yahoo Finance for this instrument.");
+    if (asset.revenueGrowth === null) asset.dataWarnings.push("Revenue growth is unavailable from Yahoo Finance for this instrument.");
+    if (asset.profitGrowth === null) asset.dataWarnings.push("Profit growth is unavailable from Yahoo Finance for this instrument.");
+    if (asset.debtToEquity === null) asset.dataWarnings.push("Debt / Equity is unavailable from Yahoo Finance for this instrument.");
+    if (asset.volatility === null || asset.maxDrawdown === null) asset.dataWarnings.push("There is not enough historical price data to calculate volatility and drawdown.");
+    if (asset.beta === null) asset.dataWarnings.push("Beta is unavailable from Yahoo Finance for this instrument.");
+    if (asset.hypeScore === null) asset.dataWarnings.push("A complete hype score could not be calculated because some attention signals are unavailable.");
+    if (asset.historicalAnnualizedReturn === null) asset.dataWarnings.push("A historical annualized return could not be calculated from the available price history.");
+    asset.dataWarnings.push("Some fundamentals may be unavailable because Yahoo Finance does not expose them consistently for every instrument. THESIS leaves missing fields blank rather than inventing values.");
+
+    return asset;
   }
 
-  async persistSnapshot(symbol:string){
-    if(!this.pool)return; const a=await this.getAsset(symbol);
-    const row=await query<{id:string}>(this.pool,`INSERT INTO assets(symbol,exchange,name,sector,asset_type) VALUES($1,$2,$3,$4,'stock') ON CONFLICT(symbol) DO UPDATE SET name=EXCLUDED.name,sector=EXCLUDED.sector RETURNING id`,[a.symbol,a.exchange,a.name,a.sector]);
-    await query(this.pool,`INSERT INTO asset_snapshots(asset_id,price,pe,market_cap,revenue_growth,profit_growth,debt_to_equity,volatility,max_drawdown,risk_score,hype_score,quality_score,personal_fit) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,[row.rows[0].id,a.price,a.pe,a.marketCap,a.revenueGrowth,a.profitGrowth,a.debtToEquity,a.volatility,a.maxDrawdown,a.riskScore,a.hypeScore,a.qualityScore,a.personalFit]);
+  async bundle(symbol: string, userId: string) {
+    const analysis = await this.analysis(symbol, userId);
+    const [chart, news] = await Promise.all([this.chart(symbol), this.newsFeed(analysis.asset.symbol, analysis.asset.name)]);
+    return { ...analysis, chart, news };
+  }
+
+  async analysis(symbol: string, userId: string) {
+    const [asset, profile] = await Promise.all([this.getAsset(symbol), this.getProfile(userId)]);
+    asset.personalFit = profile ? this.fit(asset, profile) : null;
+    return {
+      asset,
+      profile,
+      market: { price: asset.price, changePercent: asset.changePercent },
+      fundamentals: {
+        pe: asset.pe,
+        marketCap: asset.marketCap,
+        revenueGrowth: asset.revenueGrowth,
+        profitGrowth: asset.profitGrowth,
+        debtToEquity: asset.debtToEquity,
+        beta: asset.beta,
+      },
+      risk: {
+        score: asset.riskScore,
+        level: asset.riskScore === null ? "unavailable" : asset.riskScore <= 30 ? "low" : asset.riskScore <= 60 ? "moderate" : asset.riskScore <= 80 ? "high" : "very-high",
+        weights: { volatility: .30, drawdown: .20, debt: .15, earningsStability: .15, valuation: .10, marketSensitivity: .10 },
+        note: "Weights are normalized across the verified signals actually available for this asset.",
+      },
+      hype: {
+        score: asset.hypeScore,
+        level: asset.hypeScore === null ? "unavailable" : asset.hypeScore <= 30 ? "low" : asset.hypeScore <= 60 ? "moderate" : asset.hypeScore <= 80 ? "high" : "extreme",
+        method: "price acceleration + available news/attention signals + any verified fundamental divergence",
+      },
+      quality: { score: asset.qualityScore },
+      personalFit: {
+        score: asset.personalFit,
+        reason: asset.personalFit === null
+          ? "Complete Investor DNA to calculate a personal fit."
+          : asset.personalFit >= 75
+            ? "This asset broadly matches your risk, horizon and growth preferences."
+            : asset.personalFit >= 55
+              ? "There is a mixed fit; the trade-offs deserve a closer look."
+              : "This asset may sit outside your current comfort zone.",
+      },
+      dataProvider: "Yahoo Finance",
+      dataFreshness: asset.dataFreshness,
+      dataWarnings: asset.dataWarnings,
+      explanation: asset.hypeScore !== null && asset.hypeScore > 70
+        ? "Attention is elevated relative to the available fundamentals and market signals. Popularity is not evidence of future returns."
+        : "Use the evidence together: business quality, valuation, risk, attention and your own behavior.",
+    };
+  }
+
+  async batch(symbols: string[], userId: string) {
+    return Promise.all(symbols.filter(Boolean).slice(0, 8).map(s => this.analysis(s, userId)));
+  }
+
+  async chart(symbol: string) {
+    const series = await this.priceSeries(decodeURIComponent(symbol).toUpperCase());
+    if (!series.length) throw new ServiceUnavailableException("Historical price data is unavailable for this symbol.");
+    return series.slice(-120);
+  }
+
+  async news(symbol: string) {
+    const asset = await this.getAsset(symbol);
+    return this.newsFeed(asset.symbol, asset.name);
+  }
+
+  async persistSnapshot(symbol: string, userId: string) {
+    if (!this.pool) throw new ServiceUnavailableException("Supabase is not configured.");
+    const asset = await this.getAsset(symbol);
+    const row = await query<{ id: string }>(
+      this.pool,
+      `INSERT INTO assets(symbol,exchange,name,sector,asset_type)
+       VALUES($1,$2,$3,$4,$5)
+       ON CONFLICT(symbol) DO UPDATE SET exchange=EXCLUDED.exchange,name=EXCLUDED.name,sector=EXCLUDED.sector,asset_type=EXCLUDED.asset_type
+       RETURNING id`,
+      [asset.symbol, asset.exchange, asset.name, asset.sector, asset.assetType],
+    );
+    await query(
+      this.pool,
+      `INSERT INTO asset_snapshots(asset_id,price,pe,market_cap,revenue_growth,profit_growth,debt_to_equity,volatility,max_drawdown,beta,risk_score,hype_score,quality_score,personal_fit,user_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+      [row.rows[0].id, asset.price, asset.pe, asset.marketCap, asset.revenueGrowth, asset.profitGrowth, asset.debtToEquity, asset.volatility, asset.maxDrawdown, asset.beta, asset.riskScore, asset.hypeScore, asset.qualityScore, asset.personalFit, userId],
+    );
   }
 }

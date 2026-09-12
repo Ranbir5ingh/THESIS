@@ -43,3 +43,17 @@ button, input, textarea, select { font: inherit; }
 .pulse-glow { animation:pulseGlow 4s ease-in-out infinite; }
 @keyframes scan { 0%{transform:translateY(-110%)}100%{transform:translateY(110%)} }
 .scan-line { animation:scan 2.6s linear infinite; }
+
+/* Awwwards-style motion surface */
+.card-premium { position: relative; overflow: hidden; isolation: isolate; }
+.card-premium::before { content:""; position:absolute; inset:0; pointer-events:none; background: radial-gradient(500px 180px at 15% -10%, rgba(217,255,98,.09), transparent 65%); opacity:.8; }
+.card-premium::after { content:""; position:absolute; inset:0; pointer-events:none; border-radius:inherit; background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.055),transparent 70%); transform:translateX(-120%); transition:transform .8s cubic-bezier(.22,1,.36,1); }
+.card-premium:hover::after { transform:translateX(120%); }
+.ai-blob { position:absolute; border-radius:50%; filter:blur(70px); mix-blend-mode:screen; opacity:.48; will-change:transform; }
+.ai-blob-a { width:42vw; height:42vw; left:-10vw; top:-10vw; background:rgba(217,255,98,.22); animation:morphA 9s ease-in-out infinite alternate; }
+.ai-blob-b { width:36vw; height:36vw; right:-8vw; top:20vh; background:rgba(105,130,255,.2); animation:morphB 11s ease-in-out infinite alternate; }
+.ai-blob-c { width:32vw; height:32vw; left:30vw; bottom:-16vw; background:rgba(255,255,255,.1); animation:morphC 13s ease-in-out infinite alternate; }
+@keyframes morphA { 0%{transform:translate3d(0,0,0) scale(1) rotate(0deg);border-radius:46% 54% 58% 42%} 100%{transform:translate3d(12vw,18vh,0) scale(1.25) rotate(35deg);border-radius:62% 38% 42% 58%} }
+@keyframes morphB { 0%{transform:translate3d(0,0,0) scale(1);border-radius:54% 46% 40% 60%} 100%{transform:translate3d(-16vw,-12vh,0) scale(1.35);border-radius:35% 65% 60% 40%} }
+@keyframes morphC { 0%{transform:translate3d(0,0,0) scale(1);border-radius:50%} 100%{transform:translate3d(8vw,-18vh,0) scale(1.15);border-radius:40% 60% 55% 45%} }
+@media (prefers-reduced-motion:reduce){.ai-blob,.card-premium::after{animation:none!important;transition:none!important}}

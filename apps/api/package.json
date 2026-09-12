@@ -7,8 +7,7 @@
     "build": "nest build",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
-    "db:setup": "tsx scripts/db-setup.ts",
-    "db:seed": "tsx scripts/db-seed.ts"
+    "db:setup": "tsx scripts/db-setup.ts"
   },
   "dependencies": {
     "@google/genai": "latest",
